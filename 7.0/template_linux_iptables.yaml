@@ -1,0 +1,54 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+  templates:
+    - uuid: b7ddf5dfb3ca478695c3435f64987f3a
+      template: 'Linux Firewall iptables'
+      name: 'Linux Firewall iptables'
+      description: |
+        Zabbix template for monitoring iptables Firewall rules.
+
+        Created by Thomas Rzen.
+        For documentation, updates, and source code, visit:
+        https://github.com/Garfieldttt/Zabbix-Template-Linux-iptables
+      groups:
+        - name: Templates
+      items:
+        - uuid: ee8c878c77c647cb9e16dd311a2670c0
+          name: 'iptables status'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.contents[{$RULES.V4_PATH}]'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: REGEX
+              parameters:
+                - '(?m)^\*filter'
+                - '1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          triggers:
+            - uuid: cc78393a575844bdb8a002e5f5370d63
+              expression: 'min(/Linux Firewall iptables/vfs.file.contents[{$RULES.V4_PATH}],10s)=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              name: 'iptables is disabled'
+              priority: AVERAGE
+              manual_close: 'YES'
+      macros:
+        - macro: '{$ON_OFF_IPTABLES_TRIGGER}'
+          value: '1'
+          description: 'on=1 off=0'
+        - macro: '{$RULES.V4_PATH}'
+          value: /etc/iptables/rules.v4
+      valuemaps:
+        - uuid: c558ae02157f400e99c609e561bccdbe
+          name: 'iptables status'
+          mappings:
+            - value: '1'
+              newvalue: enabled
+            - value: '0'
+              newvalue: disabled
