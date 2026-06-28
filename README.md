@@ -1,6 +1,6 @@
 # Zabbix Template: Linux iptables Firewall
 
-Monitors whether iptables rules are loaded on a Linux host by checking the saved rules file. Works with any iptables policy (INPUT DROP or ACCEPT) — triggers an alert when no rules file is found or the filter table is missing.
+Monitors whether iptables rules are loaded on a Linux host by checking the saved rules file. Works with any iptables policy (INPUT DROP or ACCEPT) - triggers an alert when no rules file is found or the filter table is missing.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ Monitors whether iptables rules are loaded on a Linux host by checking the saved
 
 ## How it works
 
-The template reads the saved iptables rules file (`/etc/iptables/rules.v4` by default) using `vfs.file.contents`. It checks for the presence of `*filter` — which is present in every valid saved rules file regardless of chain policy. If the file is missing or contains no filter table, the item returns `0` and the trigger fires.
+The template reads the saved iptables rules file (`/etc/iptables/rules.v4` by default) using `vfs.file.contents`. It checks for the presence of `*filter` - which is present in every valid saved rules file regardless of chain policy. If the file is missing or contains no filter table, the item returns `0` and the trigger fires.
 
 ## Import
 
