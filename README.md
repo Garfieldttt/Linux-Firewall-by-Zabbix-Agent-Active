@@ -21,14 +21,6 @@ Covers iptables and nftables. It reports whether the ruleset was loaded into the
 3. Link **Linux Firewall by Zabbix Agent Active** to the host
 4. Set `{$FW.SERVICE}` if the host does not use `netfilter-persistent`
 
-Verify on the host:
-
-```bash
-zabbix_agent2 -c /etc/zabbix/zabbix_agent2.conf -t 'systemd.unit.info[netfilter-persistent.service,ActiveState]'
-```
-
-A healthy host answers `active`, and **Firewall service: state** shows `enabled (1)`.
-
 ---
 
 ## 2. Macros
