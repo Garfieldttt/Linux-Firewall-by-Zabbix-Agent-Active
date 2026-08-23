@@ -1,10 +1,8 @@
 # Linux Firewall by Zabbix Agent Active
 
-This Zabbix template monitors the Linux netfilter firewall through the Zabbix Agent in active mode, and it does so without granting the agent a single extra privilege. No sudo, no file ACLs, no capabilities, no UserParameters and no scripts on the monitored host.
+This Zabbix template monitors the Linux netfilter firewall through the Zabbix Agent in active mode, without granting the agent any extra privileges. No sudo, no file ACLs, no capabilities, no UserParameters and no scripts on the monitored host.
 
-It covers iptables and nftables alike. On current Debian and Ubuntu systems `iptables` is `iptables-nft`, so iptables rules end up in the `nf_tables` module either way. Hosts that load their ruleset through a different unit only override one macro.
-
-The common approach of reading `/etc/iptables/rules.v4` does not work: that file is `0640 root:root` while the agent runs as user `zabbix`, so the item turns unsupported with permission denied. It also only proves that a rules file exists on disk, never that the rules were loaded into the kernel. This template reads the live state instead.
+It covers iptables and nftables alike. On current Debian and Ubuntu systems `iptables` is `iptables-nft`, so iptables rules end up in the `nf_tables` module either way. It reports whether the ruleset was loaded into the kernel, whether it survives the next reboot, whether netfilter is active at all, and how full the connection tracking table is.
 
 ---
 
@@ -12,9 +10,9 @@ The common approach of reading `/etc/iptables/rules.v4` does not work: that file
 
 - Zabbix Server 7.0 or higher
 - Zabbix Agent 2 in active mode. The `systemd.unit.info` keys come from the systemd plugin of Agent 2 and do not exist in the C agent. `ServerActive` and `Hostname` must be set in `zabbix_agent2.conf` and match the host name in Zabbix.
-- systemd, and a unit that loads the firewall ruleset
+- systemd. Any systemd based distribution works, only the name of the firewall unit differs and that is a macro.
 
-No configuration on the monitored host, no package to install.
+Nothing has to be installed or configured on the monitored host.
 
 ---
 
@@ -45,14 +43,17 @@ A healthy host answers `active`. In Zabbix, **Firewall service: state** then sho
 
 | `{$FW.SERVICE}` | `netfilter-persistent.service` | systemd unit that loads the firewall ruleset. Override per host, for example nftables.service, ufw.service or firewalld.service. |
 
-The default is the unit that `iptables-persistent` ships on Debian and Ubuntu. It runs `iptables-restore < /etc/iptables/rules.v4`, which is why its exit code is the result of loading your ruleset.
+The unit that loads the ruleset, by distribution:
 
-| Setup | Value |
-|-------|-------|
+| Distribution | Value |
+|--------------|-------|
 | Debian, Ubuntu with iptables-persistent | `netfilter-persistent.service` |
-| nftables | `nftables.service` |
-| ufw | `ufw.service` |
-| firewalld | `firewalld.service` |
+| Ubuntu with ufw | `ufw.service` |
+| RHEL, Rocky, Alma, Fedora | `firewalld.service`, or `iptables.service` with the `iptables-services` package |
+| openSUSE, SLES | `firewalld.service` |
+| Arch | `nftables.service` or `iptables.service` |
+
+On Debian and Ubuntu the default unit runs `iptables-restore < /etc/iptables/rules.v4`, which is why its exit code is the result of loading your ruleset.
 
 ### Thresholds
 
@@ -105,7 +106,7 @@ The default is the unit that `iptables-persistent` ships on Debian and Ubuntu. I
 | Conntrack table is almost full | High | Raise net.netfilter.nf_conntrack_max or shorten the conntrack timeouts. |
 | IP forwarding changed | Info | net.ipv4.ip_forward changed. Informational, close manually. |
 
-Three dependencies keep the alert noise down: the rule load failure depends on the service being active, the flushed ruleset depends on the modules being loaded, and the full conntrack table depends on the high utilization trigger, so only one of the two conntrack problems is ever open.
+Three dependencies keep the noise down: the rule load failure depends on the service being active, the flushed ruleset depends on the modules being loaded, and the full conntrack table depends on the high utilization trigger, so only one of the two conntrack problems is ever open.
 
 ---
 
@@ -117,15 +118,14 @@ The template ships a dashboard **Firewall overview** with the service state, the
 
 ## 6. Notes
 
-- **Where the data comes from:** systemd unit properties are read over the system D-Bus. Reading properties is unprivileged, only starting, stopping or enabling a unit goes through polkit. `/proc/modules` is mode 0444, `/proc/sys/net/netfilter/nf_conntrack_count` is 0444, `nf_conntrack_max` and `ip_forward` are 0644. Everything the template reads is readable by any user on the system.
-- **What the exit code means:** `netfilter-persistent.service` is a oneshot unit. After a successful rule load it sits in state `active` with sub state `exited` and `ExecMainStatus` 0. A non zero exit code means `iptables-restore` refused part of your ruleset.
-- **`ExecMainStatus` needs three key parameters.** The property lives on the Service interface, so the key must read `systemd.unit.info[<unit>,ExecMainStatus,Service]`. Without the third parameter the item turns unsupported.
-- **Boot safety:** `UnitFileState` catches the case where the rules are loaded right now but the unit is disabled, so the firewall would not come back after the next reboot. That case is invisible to anything that only looks at the running state.
-- **Conntrack:** A full connection tracking table drops new connections without writing a single log line, which is the usual explanation behind "the firewall is dropping traffic". Utilization is a calculated item from count and max.
-- **The reference count is an approximation.** The third column of the `nf_tables` line in `/proc/modules` counts the objects referencing the module. It drops sharply when the ruleset is flushed, which makes it a usable signal, but it is not a rule count and no threshold on it is exact. `{$NF.REFCOUNT.MIN}` may need adjusting on hosts with very small rulesets.
-- **What this template cannot do:** none of these sources exposes the ruleset itself. Rules, chains, policies and per rule packet counters require CAP_NET_ADMIN, which is exactly what this template avoids. A manual `iptables -F` after a successful boot still leaves the unit in state `active`, only the reference count reacts. If you need the ruleset itself, let a root owned systemd timer write `iptables-save` into a world readable file and read that file with the agent. The agent still needs no privileges then, at the price of one unit and one timer per host.
-- **Missing unit:** if the unit named in `{$FW.SERVICE}` does not exist, the key turns unsupported, preprocessing maps that to 0 and the service trigger fires. A wrong macro value produces an alert rather than silence.
-- **Dependent items:** the two netfilter items map a missing match to 0 through a custom value error handler, so a host without netfilter modules reports 0 instead of turning the item unsupported.
+- **The template does not read the ruleset.** Rules, chains, policies and per rule packet counters require CAP_NET_ADMIN. A manual `iptables -F` after a successful boot still leaves the unit in state `active`, only the `nf_tables` reference count reacts to it. If you need the ruleset itself, let a root owned systemd timer write `iptables-save` into a world readable file and read that file with the agent.
+- **The reference count is an approximation.** The third column of the `nf_tables` line in `/proc/modules` counts the objects referencing the module. It drops sharply when the ruleset is flushed, but it is not a rule count. `{$NF.REFCOUNT.MIN}` may need adjusting on hosts with very small rulesets.
+- **Boot safety:** `UnitFileState` catches the case where the rules are loaded right now but the unit is disabled, so the firewall would not come back after the next reboot. Nothing that only looks at the running state can see that.
+- **`ExecMainStatus` needs three key parameters.** The property lives on the Service interface, so the key reads `systemd.unit.info[<unit>,ExecMainStatus,Service]`. Without the third parameter the item turns unsupported.
+- **Oneshot versus daemon:** `netfilter-persistent` and `ufw` are oneshot units, their normal sub state after a successful load is `exited`. `firewalld` is a daemon and sits in `running`. The triggers evaluate `ActiveState` and work either way.
+- **Conntrack needs the module.** Without `nf_conntrack` loaded, `nf_conntrack_count` and `nf_conntrack_max` do not exist and both items turn unsupported. Common on hosts without stateful rules, not on a firewall.
+- **Builtin netfilter:** if netfilter is compiled into the kernel instead of built as a module, it does not appear in `/proc/modules` and **Netfilter modules loaded** reports 0. The stock kernels of Debian, Ubuntu and RHEL use modules. Check this on self built kernels.
+- **A wrong unit name alerts.** If the unit in `{$FW.SERVICE}` does not exist, the key turns unsupported, preprocessing maps that to 0 and the service trigger fires, rather than the host going quiet.
 
 ---
 
