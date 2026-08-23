@@ -5,30 +5,14 @@ zabbix_export:
       name: Templates
   templates:
     - uuid: b7ddf5dfb3ca478695c3435f64987f3a
-      template: 'Linux Firewall iptables'
-      name: 'Linux Firewall iptables'
+      template: 'Linux Firewall by Zabbix Agent Active'
+      name: 'Linux Firewall by Zabbix Agent Active'
       description: |
-        Zabbix template for monitoring the Linux netfilter/iptables firewall.
-
-        The template needs no extra privileges for the Zabbix agent user: no sudo,
-        no file ACLs, no capabilities. All data comes from systemd unit properties
-        (read over the system D-Bus, readable by any user) and from world readable
-        files below /proc.
-
-        Requires Zabbix Agent 2 (active checks) for the systemd.unit.info keys.
-
-        Set {$FW.SERVICE} per host if the firewall is not loaded by
-        netfilter-persistent.service, for example nftables.service, ufw.service
-        or firewalld.service.
-
-        Limitation: none of these sources can read the ruleset itself, that would
-        require CAP_NET_ADMIN. A manual "iptables -F" after a successful boot still
-        leaves the unit in state active. Only the nf_tables module reference count
-        reacts to it, and only as an approximation.
-
-        Created by Thomas Rzen.
-        For documentation, updates, and source code, visit:
-        https://github.com/Garfieldttt/Zabbix-Template-Linux-iptables
+        Zabbix template for monitoring the Linux netfilter firewall, iptables and nftables alike. The Zabbix agent needs no extra privileges: no sudo, no file ACLs, no capabilities.
+        
+        Created by Thomas Rzen.  
+        For documentation, updates, and source code, visit:  
+        https://github.com/Garfieldttt/Linux-Firewall-by-Zabbix-Agent-Active
       groups:
         - name: Templates
       items:
@@ -39,7 +23,7 @@ zabbix_export:
           delay: 1m
           value_type: UNSIGNED
           valuemap:
-            name: 'iptables status'
+            name: 'firewall status'
           description: 'ActiveState of {$FW.SERVICE}, mapped to 1 (active) or 0 (anything else, including a missing unit).'
           preprocessing:
             - type: CHECK_NOT_SUPPORTED
@@ -57,9 +41,9 @@ zabbix_export:
               value: availability
           triggers:
             - uuid: 0e42088767a44b3290b479bf01f5ad95
-              expression: 'last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},ActiveState])=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              expression: 'last(/Linux Firewall by Zabbix Agent Active/systemd.unit.info[{$FW.SERVICE},ActiveState])=0 and {$FW.TRIGGERS.ENABLED}=1'
               name: 'Firewall service is not active'
-              event_name: 'Firewall service {$FW.SERVICE} is not active (sub state: {?last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},SubState])})'
+              event_name: 'Firewall service {$FW.SERVICE} is not active (sub state: {?last(/Linux Firewall by Zabbix Agent Active/systemd.unit.info[{$FW.SERVICE},SubState])})'
               priority: AVERAGE
               description: 'The unit that loads the firewall rules is not active. Either it failed, it was stopped, or the unit does not exist on this host.'
               manual_close: 'YES'
@@ -112,7 +96,7 @@ zabbix_export:
               value: availability
           triggers:
             - uuid: 992cccfd645a4288869a3eef0d0e485f
-              expression: 'find(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},UnitFileState],,"regexp","^(disabled|masked)$")=1 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              expression: 'find(/Linux Firewall by Zabbix Agent Active/systemd.unit.info[{$FW.SERVICE},UnitFileState],,"regexp","^(disabled|masked)$")=1 and {$FW.TRIGGERS.ENABLED}=1'
               name: 'Firewall service is not enabled at boot'
               priority: WARNING
               description: 'The firewall rules are loaded right now, but the unit will not start on the next boot.'
@@ -140,7 +124,7 @@ zabbix_export:
               value: availability
           triggers:
             - uuid: a4d96441ba15458789af53ab2abf0735
-              expression: 'last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},ExecMainStatus,Service])<>0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              expression: 'last(/Linux Firewall by Zabbix Agent Active/systemd.unit.info[{$FW.SERVICE},ExecMainStatus,Service])<>0 and {$FW.TRIGGERS.ENABLED}=1'
               name: 'Firewall rule load failed'
               event_name: 'Firewall rule load failed with exit code {ITEM.LASTVALUE1}'
               opdata: 'exit code: {ITEM.LASTVALUE1}'
@@ -149,7 +133,7 @@ zabbix_export:
               manual_close: 'YES'
               dependencies:
                 - name: 'Firewall service is not active'
-                  expression: 'last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},ActiveState])=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+                  expression: 'last(/Linux Firewall by Zabbix Agent Active/systemd.unit.info[{$FW.SERVICE},ActiveState])=0 and {$FW.TRIGGERS.ENABLED}=1'
               tags:
                 - tag: scope
                   value: availability
@@ -175,7 +159,7 @@ zabbix_export:
               value: firewall
           triggers:
             - uuid: ed519b1ef1014d76bbaf37d11f842690
-              expression: 'change(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},StateChangeTimestamp])<>0'
+              expression: 'change(/Linux Firewall by Zabbix Agent Active/systemd.unit.info[{$FW.SERVICE},StateChangeTimestamp])<>0'
               name: 'Firewall rules were reloaded'
               priority: INFO
               description: 'The firewall unit changed state, so the ruleset was reloaded. Informational, close manually.'
@@ -202,7 +186,7 @@ zabbix_export:
           delay: '0'
           value_type: UNSIGNED
           valuemap:
-            name: 'iptables status'
+            name: 'firewall status'
           description: 'Whether ip_tables or nf_tables is present in the kernel.'
           preprocessing:
             - type: REGEX
@@ -220,7 +204,7 @@ zabbix_export:
               value: availability
           triggers:
             - uuid: 2c853050a63d4dfca2e306cd535d6745
-              expression: 'last(/Linux Firewall iptables/nf.modules.loaded)=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              expression: 'last(/Linux Firewall by Zabbix Agent Active/nf.modules.loaded)=0 and {$FW.TRIGGERS.ENABLED}=1'
               name: 'Netfilter modules are not loaded'
               priority: AVERAGE
               description: 'Neither ip_tables nor nf_tables is loaded, so no packet filtering is happening in the kernel.'
@@ -252,7 +236,7 @@ zabbix_export:
               value: firewall
           triggers:
             - uuid: 82b6781d05814221b4acaf43db5c4244
-              expression: 'max(/Linux Firewall iptables/nf.tables.refcount,5m)<{$NF.REFCOUNT.MIN} and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              expression: 'max(/Linux Firewall by Zabbix Agent Active/nf.tables.refcount,5m)<{$NF.REFCOUNT.MIN} and {$FW.TRIGGERS.ENABLED}=1'
               name: 'Ruleset appears to be flushed'
               opdata: 'refcount: {ITEM.LASTVALUE1}'
               priority: WARNING
@@ -260,7 +244,7 @@ zabbix_export:
               manual_close: 'YES'
               dependencies:
                 - name: 'Netfilter modules are not loaded'
-                  expression: 'last(/Linux Firewall iptables/nf.modules.loaded)=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+                  expression: 'last(/Linux Firewall by Zabbix Agent Active/nf.modules.loaded)=0 and {$FW.TRIGGERS.ENABLED}=1'
               tags:
                 - tag: scope
                   value: availability
@@ -308,7 +292,7 @@ zabbix_export:
               value: performance
           triggers:
             - uuid: 20081ec6c8654c028b1fbf95a212ea29
-              expression: 'min(/Linux Firewall iptables/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.WARN}'
+              expression: 'min(/Linux Firewall by Zabbix Agent Active/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.WARN}'
               name: 'Conntrack table utilization is high'
               opdata: '{ITEM.LASTVALUE1}'
               priority: WARNING
@@ -318,7 +302,7 @@ zabbix_export:
                 - tag: scope
                   value: performance
             - uuid: cd50e1a5f7754b1bb2e5fb917a9f270b
-              expression: 'min(/Linux Firewall iptables/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.CRIT}'
+              expression: 'min(/Linux Firewall by Zabbix Agent Active/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.CRIT}'
               name: 'Conntrack table is almost full'
               opdata: '{ITEM.LASTVALUE1}'
               priority: HIGH
@@ -326,7 +310,7 @@ zabbix_export:
               manual_close: 'YES'
               dependencies:
                 - name: 'Conntrack table utilization is high'
-                  expression: 'min(/Linux Firewall iptables/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.WARN}'
+                  expression: 'min(/Linux Firewall by Zabbix Agent Active/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.WARN}'
               tags:
                 - tag: scope
                   value: performance
@@ -337,7 +321,7 @@ zabbix_export:
           delay: 5m
           value_type: UNSIGNED
           valuemap:
-            name: 'iptables status'
+            name: 'firewall status'
           description: 'Whether the host routes packets between interfaces. Relevant on gateways, and an unexpected change is worth a look.'
           preprocessing:
             - type: DISCARD_UNCHANGED_HEARTBEAT
@@ -348,7 +332,7 @@ zabbix_export:
               value: firewall
           triggers:
             - uuid: f2083ce6fa964c96919d4a79c81b5fe4
-              expression: 'change(/Linux Firewall iptables/vfs.file.contents[/proc/sys/net/ipv4/ip_forward])<>0'
+              expression: 'change(/Linux Firewall by Zabbix Agent Active/vfs.file.contents[/proc/sys/net/ipv4/ip_forward])<>0'
               name: 'IP forwarding changed'
               opdata: '{ITEM.LASTVALUE1}'
               priority: INFO
@@ -370,9 +354,9 @@ zabbix_export:
         - macro: '{$NF.REFCOUNT.MIN}'
           value: '10'
           description: 'Lowest nf_tables reference count that still counts as a loaded ruleset.'
-        - macro: '{$ON_OFF_IPTABLES_TRIGGER}'
+        - macro: '{$FW.TRIGGERS.ENABLED}'
           value: '1'
-          description: 'on=1 off=0'
+          description: 'Set to 0 to silence the availability triggers of this template. 1 keeps them active.'
       dashboards:
         - uuid: 588508d5a8534d44a43daeb88f346344
           name: 'Firewall overview'
@@ -388,7 +372,7 @@ zabbix_export:
                     - type: ITEM
                       name: itemid.0
                       value:
-                        host: 'Linux Firewall iptables'
+                        host: 'Linux Firewall by Zabbix Agent Active'
                         key: 'systemd.unit.info[{$FW.SERVICE},ActiveState]'
                     - type: INTEGER
                       name: show.1
@@ -403,7 +387,7 @@ zabbix_export:
                     - type: ITEM
                       name: itemid.0
                       value:
-                        host: 'Linux Firewall iptables'
+                        host: 'Linux Firewall by Zabbix Agent Active'
                         key: 'systemd.unit.info[{$FW.SERVICE},SubState]'
                     - type: INTEGER
                       name: show.1
@@ -418,7 +402,7 @@ zabbix_export:
                     - type: ITEM
                       name: itemid.0
                       value:
-                        host: 'Linux Firewall iptables'
+                        host: 'Linux Firewall by Zabbix Agent Active'
                         key: nf.modules.loaded
                     - type: INTEGER
                       name: show.1
@@ -433,14 +417,14 @@ zabbix_export:
                     - type: ITEM
                       name: itemid.0
                       value:
-                        host: 'Linux Firewall iptables'
+                        host: 'Linux Firewall by Zabbix Agent Active'
                         key: nf.conntrack.pused
                     - type: INTEGER
                       name: show.1
                       value: '2'
       valuemaps:
         - uuid: c558ae02157f400e99c609e561bccdbe
-          name: 'iptables status'
+          name: 'firewall status'
           mappings:
             - value: '1'
               newvalue: enabled
@@ -454,5 +438,5 @@ zabbix_export:
           color: 1A7C11
           calc_fnc: AVG
           item:
-            host: 'Linux Firewall iptables'
+            host: 'Linux Firewall by Zabbix Agent Active'
             key: nf.conntrack.pused
