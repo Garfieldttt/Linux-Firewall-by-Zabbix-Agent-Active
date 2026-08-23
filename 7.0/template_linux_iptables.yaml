@@ -8,7 +8,23 @@ zabbix_export:
       template: 'Linux Firewall iptables'
       name: 'Linux Firewall iptables'
       description: |
-        Zabbix template for monitoring iptables Firewall rules.
+        Zabbix template for monitoring the Linux netfilter/iptables firewall.
+
+        The template needs no extra privileges for the Zabbix agent user: no sudo,
+        no file ACLs, no capabilities. All data comes from systemd unit properties
+        (read over the system D-Bus, readable by any user) and from world readable
+        files below /proc.
+
+        Requires Zabbix Agent 2 (active checks) for the systemd.unit.info keys.
+
+        Set {$FW.SERVICE} per host if the firewall is not loaded by
+        netfilter-persistent.service, for example nftables.service, ufw.service
+        or firewalld.service.
+
+        Limitation: none of these sources can read the ruleset itself, that would
+        require CAP_NET_ADMIN. A manual "iptables -F" after a successful boot still
+        leaves the unit in state active. Only the nf_tables module reference count
+        reacts to it, and only as an approximation.
 
         Created by Thomas Rzen.
         For documentation, updates, and source code, visit:
@@ -16,34 +32,412 @@ zabbix_export:
       groups:
         - name: Templates
       items:
-        - uuid: ee8c878c77c647cb9e16dd311a2670c0
-          name: 'iptables status'
+        - uuid: ea26081be974486ca01acd0764f71170
+          name: 'Firewall service: state'
           type: ZABBIX_ACTIVE
-          key: 'vfs.file.contents[{$RULES.V4_PATH}]'
+          key: 'systemd.unit.info[{$FW.SERVICE},ActiveState]'
+          delay: 1m
+          value_type: UNSIGNED
+          valuemap:
+            name: 'iptables status'
+          description: 'ActiveState of {$FW.SERVICE}, mapped to 1 (active) or 0 (anything else, including a missing unit).'
           preprocessing:
             - type: CHECK_NOT_SUPPORTED
               parameters:
                 - '-1'
               error_handler: CUSTOM_VALUE
               error_handler_params: '0'
+            - type: JAVASCRIPT
+              parameters:
+                - 'return value === "active" ? 1 : 0;'
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: availability
+          triggers:
+            - uuid: 0e42088767a44b3290b479bf01f5ad95
+              expression: 'last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},ActiveState])=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              name: 'Firewall service is not active'
+              event_name: 'Firewall service {$FW.SERVICE} is not active (sub state: {?last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},SubState])})'
+              priority: AVERAGE
+              description: 'The unit that loads the firewall rules is not active. Either it failed, it was stopped, or the unit does not exist on this host.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 0afed702dcfa4474aef0c81e46bc13b7
+          name: 'Firewall service: sub state'
+          type: ZABBIX_ACTIVE
+          key: 'systemd.unit.info[{$FW.SERVICE},SubState]'
+          delay: 1m
+          trends: '0'
+          value_type: CHAR
+          description: 'SubState of {$FW.SERVICE}. For a oneshot unit like netfilter-persistent, "exited" is the normal state after a successful rule load.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: unknown
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: availability
+        - uuid: 9a2f2b3700034a97aeeb2880972a11ae
+          name: 'Firewall service: unit file state'
+          type: ZABBIX_ACTIVE
+          key: 'systemd.unit.info[{$FW.SERVICE},UnitFileState]'
+          delay: 1h
+          trends: '0'
+          value_type: CHAR
+          description: 'Tells whether the firewall unit is enabled at boot. A disabled or masked unit means the rules will not come back after the next reboot.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: unknown
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: availability
+          triggers:
+            - uuid: 992cccfd645a4288869a3eef0d0e485f
+              expression: 'find(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},UnitFileState],,"regexp","^(disabled|masked)$")=1 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              name: 'Firewall service is not enabled at boot'
+              priority: WARNING
+              description: 'The firewall rules are loaded right now, but the unit will not start on the next boot.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 476d9abeac62418a86695a0b9908bab7
+          name: 'Firewall service: last exit code'
+          type: ZABBIX_ACTIVE
+          key: 'systemd.unit.info[{$FW.SERVICE},ExecMainStatus,Service]'
+          delay: 1m
+          value_type: UNSIGNED
+          description: 'Exit code of the last rule load. 0 means the ruleset was applied without error. The third key parameter Service is mandatory for this property.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '1'
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: availability
+          triggers:
+            - uuid: a4d96441ba15458789af53ab2abf0735
+              expression: 'last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},ExecMainStatus,Service])<>0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              name: 'Firewall rule load failed'
+              event_name: 'Firewall rule load failed with exit code {ITEM.LASTVALUE1}'
+              opdata: 'exit code: {ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'The unit ran but exited with a non zero code, so the ruleset was not applied completely.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'Firewall service is not active'
+                  expression: 'last(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},ActiveState])=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 1a1bb4cd87564346b89229efb3177100
+          name: 'Firewall rules: last load time'
+          type: ZABBIX_ACTIVE
+          key: 'systemd.unit.info[{$FW.SERVICE},StateChangeTimestamp]'
+          delay: 5m
+          value_type: UNSIGNED
+          units: unixtime
+          description: 'Timestamp of the last state change of the firewall unit. The property is delivered in microseconds and converted to unixtime here.'
+          preprocessing:
+            - type: CHECK_NOT_SUPPORTED
+              parameters:
+                - '-1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+            - type: MULTIPLIER
+              parameters:
+                - '0.000001'
+          tags:
+            - tag: component
+              value: firewall
+          triggers:
+            - uuid: ed519b1ef1014d76bbaf37d11f842690
+              expression: 'change(/Linux Firewall iptables/systemd.unit.info[{$FW.SERVICE},StateChangeTimestamp])<>0'
+              name: 'Firewall rules were reloaded'
+              priority: INFO
+              description: 'The firewall unit changed state, so the ruleset was reloaded. Informational, close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: 2b07e850aa6142ed8297ee0ba98c4bf9
+          name: 'Kernel modules: raw'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.contents[/proc/modules]'
+          delay: 5m
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          description: 'Master item. /proc/modules is world readable (0444), so no extra privileges are needed.'
+          tags:
+            - tag: component
+              value: firewall
+        - uuid: 75a07a0abdb148a68674562888627853
+          name: 'Netfilter modules loaded'
+          type: DEPENDENT
+          key: nf.modules.loaded
+          delay: '0'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'iptables status'
+          description: 'Whether ip_tables or nf_tables is present in the kernel.'
+          preprocessing:
             - type: REGEX
               parameters:
-                - '(?m)^\*filter'
+                - '(?m)^(?:ip_tables|nf_tables)\s'
                 - '1'
               error_handler: CUSTOM_VALUE
               error_handler_params: '0'
+          master_item:
+            key: 'vfs.file.contents[/proc/modules]'
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: availability
           triggers:
-            - uuid: cc78393a575844bdb8a002e5f5370d63
-              expression: 'min(/Linux Firewall iptables/vfs.file.contents[{$RULES.V4_PATH}],10s)=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
-              name: 'iptables is disabled'
+            - uuid: 2c853050a63d4dfca2e306cd535d6745
+              expression: 'last(/Linux Firewall iptables/nf.modules.loaded)=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              name: 'Netfilter modules are not loaded'
               priority: AVERAGE
+              description: 'Neither ip_tables nor nf_tables is loaded, so no packet filtering is happening in the kernel.'
               manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 2bd2f0a2138742b18a63d1e7447296b7
+          name: 'nf_tables reference count'
+          type: DEPENDENT
+          key: nf.tables.refcount
+          delay: '0'
+          value_type: UNSIGNED
+          description: |
+            Third column of the nf_tables line in /proc/modules. It counts the objects referencing the module and drops sharply when the ruleset is flushed.
+
+            This is an approximation, not an exact rule count. Reading the ruleset itself would require CAP_NET_ADMIN.
+          preprocessing:
+            - type: REGEX
+              parameters:
+                - '(?m)^nf_tables\s+\d+\s+(\d+)'
+                - \1
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: 'vfs.file.contents[/proc/modules]'
+          tags:
+            - tag: component
+              value: firewall
+          triggers:
+            - uuid: 82b6781d05814221b4acaf43db5c4244
+              expression: 'max(/Linux Firewall iptables/nf.tables.refcount,5m)<{$NF.REFCOUNT.MIN} and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              name: 'Ruleset appears to be flushed'
+              opdata: 'refcount: {ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The nf_tables reference count fell below {$NF.REFCOUNT.MIN}, which usually means the ruleset was flushed or never loaded.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'Netfilter modules are not loaded'
+                  expression: 'last(/Linux Firewall iptables/nf.modules.loaded)=0 and {$ON_OFF_IPTABLES_TRIGGER}=1'
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 6289362588ef4dcbb9120a620103662a
+          name: 'Conntrack entries'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.contents[/proc/sys/net/netfilter/nf_conntrack_count]'
+          delay: 1m
+          value_type: UNSIGNED
+          description: 'Current number of tracked connections. The file is world readable (0444).'
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: performance
+        - uuid: 38584410992445dabcc670ff61b19a81
+          name: 'Conntrack table size'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.contents[/proc/sys/net/netfilter/nf_conntrack_max]'
+          delay: 1h
+          value_type: UNSIGNED
+          description: 'Maximum number of tracked connections.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: performance
+        - uuid: e4fd69bb519f46258c0e2c53af7e5d87
+          name: 'Conntrack table utilization'
+          type: CALCULATED
+          key: nf.conntrack.pused
+          delay: 1m
+          value_type: FLOAT
+          units: '%'
+          params: 'last(/{HOST.HOST}/vfs.file.contents[/proc/sys/net/netfilter/nf_conntrack_count]) / last(/{HOST.HOST}/vfs.file.contents[/proc/sys/net/netfilter/nf_conntrack_max]) * 100'
+          description: 'A full conntrack table silently drops new connections, so this is the metric that usually explains "the firewall is dropping traffic".'
+          tags:
+            - tag: component
+              value: firewall
+            - tag: scope
+              value: performance
+          triggers:
+            - uuid: 20081ec6c8654c028b1fbf95a212ea29
+              expression: 'min(/Linux Firewall iptables/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.WARN}'
+              name: 'Conntrack table utilization is high'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: WARNING
+              description: 'The connection tracking table is filling up. Once it is full, new connections are dropped without any log entry.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: performance
+            - uuid: cd50e1a5f7754b1bb2e5fb917a9f270b
+              expression: 'min(/Linux Firewall iptables/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.CRIT}'
+              name: 'Conntrack table is almost full'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: HIGH
+              description: 'Raise net.netfilter.nf_conntrack_max or shorten the conntrack timeouts.'
+              manual_close: 'YES'
+              dependencies:
+                - name: 'Conntrack table utilization is high'
+                  expression: 'min(/Linux Firewall iptables/nf.conntrack.pused,5m)>{$CONNTRACK.PUSED.WARN}'
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 1c33d9bbcb3644018243b70bdba96c1e
+          name: 'IP forwarding'
+          type: ZABBIX_ACTIVE
+          key: 'vfs.file.contents[/proc/sys/net/ipv4/ip_forward]'
+          delay: 5m
+          value_type: UNSIGNED
+          valuemap:
+            name: 'iptables status'
+          description: 'Whether the host routes packets between interfaces. Relevant on gateways, and an unexpected change is worth a look.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1h
+          tags:
+            - tag: component
+              value: firewall
+          triggers:
+            - uuid: f2083ce6fa964c96919d4a79c81b5fe4
+              expression: 'change(/Linux Firewall iptables/vfs.file.contents[/proc/sys/net/ipv4/ip_forward])<>0'
+              name: 'IP forwarding changed'
+              opdata: '{ITEM.LASTVALUE1}'
+              priority: INFO
+              description: 'net.ipv4.ip_forward changed. Informational, close manually.'
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: notice
       macros:
+        - macro: '{$CONNTRACK.PUSED.CRIT}'
+          value: '95'
+          description: 'Conntrack table utilization in percent for the high severity trigger.'
+        - macro: '{$CONNTRACK.PUSED.WARN}'
+          value: '80'
+          description: 'Conntrack table utilization in percent for the warning trigger.'
+        - macro: '{$FW.SERVICE}'
+          value: netfilter-persistent.service
+          description: 'systemd unit that loads the firewall ruleset. Override per host, for example nftables.service, ufw.service or firewalld.service.'
+        - macro: '{$NF.REFCOUNT.MIN}'
+          value: '10'
+          description: 'Lowest nf_tables reference count that still counts as a loaded ruleset.'
         - macro: '{$ON_OFF_IPTABLES_TRIGGER}'
           value: '1'
           description: 'on=1 off=0'
-        - macro: '{$RULES.V4_PATH}'
-          value: /etc/iptables/rules.v4
+      dashboards:
+        - uuid: 588508d5a8534d44a43daeb88f346344
+          name: 'Firewall overview'
+          pages:
+            - widgets:
+                - type: item
+                  name: 'Service state'
+                  x: '0'
+                  y: '0'
+                  width: '18'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Linux Firewall iptables'
+                        key: 'systemd.unit.info[{$FW.SERVICE},ActiveState]'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                - type: item
+                  name: 'Sub state'
+                  x: '18'
+                  y: '0'
+                  width: '18'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Linux Firewall iptables'
+                        key: 'systemd.unit.info[{$FW.SERVICE},SubState]'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                - type: item
+                  name: 'Netfilter modules'
+                  x: '36'
+                  y: '0'
+                  width: '18'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Linux Firewall iptables'
+                        key: nf.modules.loaded
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                - type: item
+                  name: 'Conntrack utilization'
+                  x: '54'
+                  y: '0'
+                  width: '18'
+                  height: '3'
+                  fields:
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Linux Firewall iptables'
+                        key: nf.conntrack.pused
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
       valuemaps:
         - uuid: c558ae02157f400e99c609e561bccdbe
           name: 'iptables status'
@@ -52,3 +446,13 @@ zabbix_export:
               newvalue: enabled
             - value: '0'
               newvalue: disabled
+  graphs:
+    - uuid: 7d6031a732624c1d90986ff2fe991dc1
+      name: 'Conntrack table utilization'
+      graph_items:
+        - sortorder: '0'
+          color: 1A7C11
+          calc_fnc: AVG
+          item:
+            host: 'Linux Firewall iptables'
+            key: nf.conntrack.pused
